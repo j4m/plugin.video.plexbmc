@@ -43,6 +43,13 @@ import hashlib
 import random
 import cProfile
 
+try:
+    import StorageServer
+except:
+    import storageserverdummy as StorageServer
+
+cache = StorageServer.StorageServer("plexbmc", 24) # (Your plugin name, Cache time in hours)
+
 __settings__ = xbmcaddon.Addon(id='plugin.video.plexbmc')
 __cwd__ = __settings__.getAddonInfo('path')
 BASE_RESOURCE_PATH = xbmc.translatePath( os.path.join( __cwd__, 'resources', 'lib' ) )
@@ -337,7 +344,7 @@ def resolveAllServers( ):
         if ( servers['discovery'] == 'local' ) or ( servers['discovery'] == 'bonjour' ):
             localServers+=getLocalServers()
         elif servers['discovery'] == 'myplex':
-            localServers+=getMyPlexServers()
+            localServers+=cache.cacheFunction(getMyPlexServers)
 
     printDebug ("Resolved server List: " + str(localServers))
 
@@ -450,6 +457,7 @@ def getAllSections( ):
                 twoCount+=1
 
             oneCount+=1
+    return g_serverDict       
 
 def getAuthDetails( details, url_format=True, prefix="&" ):
     '''
@@ -991,9 +999,9 @@ def displaySections( filter=None ):
 
         numOfServers=len(g_serverDict)
         printDebug( "Using list of "+str(numOfServers)+" servers: " +  str(g_serverDict))
-        getAllSections()
+        section_list = cache.cacheFunction(getAllSections)
 
-        for section in g_sections:
+        for section in sectionList:
 
             details={'title' : section.get('title', 'Unknown') }
 
@@ -3124,12 +3132,13 @@ def skin( ):
     #Get the global host variable set in settings
     WINDOW = xbmcgui.Window( 10000 )
 
-    getAllSections()
+    section_list = cache.cacheFunction(getAllSections)
+
     sectionCount=0
     serverCount=0
 
     #For each of the servers we have identified
-    for section in g_sections:
+    for section in section_list:
 
         extraData={ 'fanart_image' : getFanart(section, section['address']) ,
                     'thumb'        : getFanart(section, section['address'], False) }
