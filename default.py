@@ -55,6 +55,37 @@ CACHEDATA=PLUGINPATH+"/cache"
 sys.path.append(BASE_RESOURCE_PATH)
 PLEXBMC_VERSION="3.2.2"
 
+class MyPlayer(xbmc.Player) :
+
+	
+        def __init__ (self):
+            xbmc.Player.__init__(self)
+            self.XBMC_PLAYERSTATE = "none"
+
+        def onPlayBackStarted(self):
+            self.XBMC_PLAYERSTATE="playing"
+            
+            
+        def onPlayBackEnded(self):
+            self.XBMC_PLAYERSTATE="stopped"
+            
+
+        def onPlayBackPaused(self):
+            self.XBMC_PLAYERSTATE="paused"
+            
+
+        def onPlayBackResumed(self):
+            self.XBMC_PLAYERSTATE="playing"
+            
+
+        def onPlayBackStopped(self):
+            self.XBMC_PLAYERSTATE="stopped"
+            
+            
+	
+	
+player=MyPlayer()
+
 print "===== PLEXBMC START ====="
 
 print "PleXBMC -> running Python: " + str(sys.version_info)
@@ -155,8 +186,12 @@ def getPlatform( ):
 
     return "Unknown"
 
+XBMC_SYSTEMNAME=xbmc.getInfoLabel('system.friendlyname')
+XBMC_BUILDVERSION=xbmc.getInfoLabel('system.buildversion')
 PLEXBMC_PLATFORM=getPlatform()
 print "PleXBMC -> Platform: " + str(PLEXBMC_PLATFORM)
+
+
 
 #Next Check the WOL status - lets give the servers as much time as possible to come up
 g_wolon = __settings__.getSetting('wolon')
@@ -876,6 +911,75 @@ def getURL( url, suppress=True, type="GET", popup=0 ):
             else:
                 xbmcgui.Dialog().ok("PleXBMC","Server is offline or not responding")
 
+    try: conn.close()
+    except: pass
+    
+    return False
+
+def getTimelineURL(server, container, id, state, time=0, duration=0):
+
+    printDebug("== ENTER: getTimelineURL ==", False)
+    try:
+        
+        urlPath="/:/timeline?containerKey=" + container + "&key=/library/metadata/" + id + "&ratingKey=" + id
+        
+        if state == "buffering":
+        	urlPath += "&state=buffering&time=" + str(time)        	
+        elif state == "playing":
+        	urlPath += "&state=playing&time=" + str(time) + "&duration=" + str(duration)
+        elif state == "stopped":
+        	urlPath += "&state=stopped&time=" + str(time) + "&duration=" + str(duration)
+        elif state == "paused":
+		urlPath += "&state=paused&time=" + str(time) + "&duration=" + str(duration)
+	else:
+		printDebug("No valid state supplied for getTimelineURL. State: " + str(state))
+		return
+	
+	urlPath += getAuthDetails({'token':_PARAM_TOKEN})
+	
+	global g_sessionID
+	if g_sessionID is None:
+        	import uuid
+        	g_sessionID=str(uuid.uuid4())
+        
+        getHeader={'X-Plex-Platform': PLEXBMC_PLATFORM + "-XBMC",
+	                    'X-Plex-Platform-Version': XBMC_BUILDVERSION,
+	                    'X-Plex-Provides': "player",
+	                    'X-Plex-Product': "PleXBMC",
+	                    'X-Plex-Version': PLEXBMC_VERSION,
+	                    'X-Plex-Device': PLEXBMC_PLATFORM,
+	                    'X-Plex-Client-Identifier': g_sessionID,
+	                    'X-Plex-Device-Name': XBMC_SYSTEMNAME}
+
+
+        printDebug("header = "+str(getHeader))
+        conn = httplib.HTTPConnection(server)#,timeout=5)
+        conn.request("GET", urlPath, headers=getHeader)
+        data = conn.getresponse()
+        
+        if int(data.status) == 200:
+            link=data.read()
+            try: conn.close()
+            except: pass
+            return link
+
+        
+                    
+        else:
+            link=data.read()
+            try: conn.close()
+            except: pass
+            return link
+            
+    except socket.gaierror :
+        error = "Unable to locate host [%s]\nCheck host name is correct" % server
+        print "PleXBMC %s" % error
+        
+        
+    except socket.error, msg :
+        error="Server[%s] is offline, or not responding\nReason: %s" % (server, str(msg))
+        print "PleXBMC -> %s" % error
+        
     try: conn.close()
     except: pass
     
@@ -1986,6 +2090,8 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
     else:
         start = xbmcplugin.setResolvedUrl(pluginhandle, True, item)
 
+    getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+    
     #Set a loop to wait for positive confirmation of playback
     count = 0
     while not xbmc.Player().isPlaying():
@@ -2145,14 +2251,14 @@ def monitorPlayback( id, server ):
         except:
             progress = 0
 
-        if currentTime < 30:
-            printDebug("Less that 30 seconds, will not set resume")
+        if player.XBMC_PLAYERSTATE == "paused":
+	    getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
+	
+	if ((progress < 99) & (player.XBMC_PLAYERSTATE == "playing")) :
+	    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+	    getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
+	    complete=0
 
-        #If we are less than 95% completem, store resume time
-        elif progress < 95:
-            printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-            getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
-            complete=0
 
         #Otherwise, mark as watched
         else:
@@ -2170,7 +2276,8 @@ def monitorPlayback( id, server ):
         printDebug("Stopping PMS transcode job with session " + g_sessionID)
         stopURL='http://'+server+'/video/:/transcode/segmented/stop?session='+g_sessionID
         html=getURL(stopURL)
-
+    
+    getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
     return
 
 def PLAY( url ):
@@ -2334,6 +2441,8 @@ def pluginTranscodeMonitor( sessionID, server ):
 
     html=getURL(stopURL)
 
+    getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
+    
     return
 
 def get_params( paramstring ):
