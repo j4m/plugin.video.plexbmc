@@ -274,7 +274,7 @@ def discoverAllServers( ):
             local server - from IP configuration
             bonjour server - from a bonjour lookup
             myplex server - from myplex configuration
-        Alters the global g_serverDict value
+        
         @input: None
         @return: None
     '''
@@ -433,6 +433,7 @@ def getLocalServers( ip_address, port ):
     return {'serverName': server.get('friendlyName','Unknown').encode('utf-8') ,
                         'server'    : ip_address,
                         'port'      : port ,
+                        'version'   : version ,
                         'discovery' : 'local' ,
                         'token'     : None ,
                         'uuid'      : server.get('machineIdentifier') ,
@@ -475,6 +476,7 @@ def getMyPlexServers( ):
         tempServers.append({'serverName': data['name'].encode('utf-8') ,
                             'server'    : data['address'] ,
                             'port'      : data['port'] ,
+                            'version'   : data['version'] ,
                             'discovery' : 'myplex' ,
                             'token'     : accessToken ,
                             'uuid'      : data['machineIdentifier'] ,
@@ -592,6 +594,7 @@ def getMyplexSections ( ):
             temp_list.append( {'title'      : sections.get('title','Unknown').encode('utf-8'),
                     'address'    : sections.get('host','Unknown')+":"+sections.get('port'),
                     'serverName' : sections.get('serverName','Unknown').encode('utf-8'),
+                    'version'	 : sections.get('serverVersion','Unknown'),
                     'uuid'       : sections.get('machineIdentifier','Unknown') ,
                     'path'       : sections.get('path') ,
                     'token'      : sections.get('accessToken',None) ,
@@ -2090,7 +2093,23 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
     else:
         start = xbmcplugin.setResolvedUrl(pluginhandle, True, item)
 
-    getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+
+    #Get the server IP from the server URL (IP + Port)
+    serverIP = server.split(':')[0]
+    
+    #Call discoverAllServers in order to get the "Server Version" from server xml
+    for serverData in discoverAllServers().values():
+	if serverData['server'] == serverIP:
+		#split server version string up as it contains a '-' and cannot use this with > operator
+		serverVersion = serverData['version'].split('-')[0]
+    
+    serverMultiUser = False
+    if serverVersion >= "0.9.8.0":
+    	serverMultiUser = True
+    
+    if serverMultiUser:
+    	#Sets new Timeline API state before playing (nice to have)
+    	getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
     
     #Set a loop to wait for positive confirmation of playback
     count = 0
@@ -2104,9 +2123,9 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
 
     if not (g_transcode == "true" ):
         setAudioSubtitles(streams)
-
+    
     if streams['type'] == "video":
-        monitorPlayback(id,server)
+        monitorPlayback(id,server,serverMultiUser)
 
     return
 
@@ -2228,7 +2247,7 @@ def remove_html_tags( data ):
     p = re.compile(r'<.*?>')
     return p.sub('', data)
 
-def monitorPlayback( id, server ):
+def monitorPlayback( id, server, servermultiuser):
     printDebug("== ENTER: monitorPlayback ==", False)
 
     if __settings__.getSetting('monitoroff') == "true":
@@ -2252,20 +2271,30 @@ def monitorPlayback( id, server ):
             progress = 0
 
         if player.XBMC_PLAYERSTATE == "paused":
-	    getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
+            if servermultiuser:
+                printDebug( "Movies PAUSED time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+	    	getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
 	
-	if ((progress < 99) & (player.XBMC_PLAYERSTATE == "playing")) :
-	    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-	    getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
-	    complete=0
-
-
-        #Otherwise, mark as watched
-        else:
-            if complete == 0:
-                printDebug( "Movie marked as watched. Over 95% complete")
-                getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
-                complete=1
+	if player.XBMC_PLAYERSTATE == "playing" :
+	    if servermultiuser == True:
+	        printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+	    	getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
+	    	#No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
+	    
+	    #Legacy PMS Server server support before MultiUser version v0.9.8.0  
+	    elif servermultiuser == False:
+	    	if currentTime < 30:
+	            printDebug("Less that 30 seconds, will not set resume")
+		elif progress < 95:
+		    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+		    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
+	            complete=0
+		#Otherwise, mark as watched
+		else:
+		    if complete == 0:
+			printDebug( "Movie marked as watched. Over 95% complete")
+			getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
+			complete=1
 
         xbmc.sleep(5000)
 
@@ -2277,7 +2306,9 @@ def monitorPlayback( id, server ):
         stopURL='http://'+server+'/video/:/transcode/segmented/stop?session='+g_sessionID
         html=getURL(stopURL)
     
-    getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
+    if servermultiuser:
+    	getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
+    	
     return
 
 def PLAY( url ):
@@ -2437,11 +2468,11 @@ def pluginTranscodeMonitor( sessionID, server ):
 
     printDebug("Playback Stopped")
     printDebug("Stopping PMS transcode job with session: " + sessionID)
+    
     stopURL='http://'+server+'/video/:/transcode/segmented/stop?session='+sessionID
 
     html=getURL(stopURL)
 
-    getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
     
     return
 
