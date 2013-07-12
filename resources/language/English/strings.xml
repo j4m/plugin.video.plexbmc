@@ -7,7 +7,7 @@
 	<string id="30004">Automatic Discovery?</string>
 	<string id="30005">PMS Username: </string>
 	<string id="30006">PMS Password: </string>
-	<string id="30094">Use HTTPS: </string>
+	<string id="30094">Prefer HTTPS? [PMS v0.9.8.0+ Only]</string>
 	<string id="30095">HTTPS Port: </string>
     <string id="30007">Always transcode? </string>
     <string id="30008">Transcode format </string>

@@ -435,7 +435,7 @@ def getLocalServers( ip_address, port ):
     return {'serverName': server.get('friendlyName','Unknown').encode('utf-8') ,
                         'server'    : ip_address,
                         'port'      : port ,
-                        'version'   : version ,
+                        'serverVersion'   : server.get('version') ,
                         'discovery' : 'local' ,
                         'token'     : None ,
                         'uuid'      : server.get('machineIdentifier') ,
@@ -478,7 +478,7 @@ def getMyPlexServers( ):
         tempServers.append({'serverName': data['name'].encode('utf-8') ,
                             'server'    : data['address'] ,
                             'port'      : data['port'] ,
-                            'version'   : data['version'] ,
+                            'serverVersion'   : data['version'] ,
                             'discovery' : 'myplex' ,
                             'token'     : accessToken ,
                             'uuid'      : data['machineIdentifier'] ,
@@ -538,7 +538,7 @@ def deduplicateServers( server_list ):
 
     return unique_list
 
-def getServerSections ( ip_address, port, name, uuid):
+def getServerSections ( ip_address, port, name, uuid, serverVersion):
     printDebug("== ENTER: getServerSections ==", False)
 
     cache_file = "%s/%s.sections.cache" % (CACHEDATA, uuid)
@@ -564,6 +564,7 @@ def getServerSections ( ip_address, port, name, uuid):
                     'serverName' : name ,
                     'uuid'       : uuid ,
                     'path'       : path ,
+                    'serverVersion' : serverVersion ,
                     'token'      : sections.get('accessToken',None) ,
                     'location'   : "local" ,
                     'art'        : sections.get('art','') ,
@@ -596,7 +597,7 @@ def getMyplexSections ( ):
             temp_list.append( {'title'      : sections.get('title','Unknown').encode('utf-8'),
                     'address'    : sections.get('host','Unknown')+":"+sections.get('port'),
                     'serverName' : sections.get('serverName','Unknown').encode('utf-8'),
-                    'version'	 : sections.get('serverVersion','Unknown'),
+                    'serverVersion' : sections.get('serverVersion','Unknown'),
                     'uuid'       : sections.get('machineIdentifier','Unknown') ,
                     'path'       : sections.get('path') ,
                     'token'      : sections.get('accessToken',None) ,
@@ -632,7 +633,7 @@ def getAllSections( server_list = None ):
     for server in server_list.itervalues():
 
         if server['discovery'] == "local" or server['discovery'] == "auto":
-            section_details =  getServerSections( server['server'], server['port'] , server['serverName'], server['uuid']) 
+            section_details =  getServerSections( server['server'], server['port'] , server['serverName'], server['uuid'], server['serverVersion']) 
             section_list += section_details
             local_complete=True
             
@@ -847,14 +848,19 @@ def getURL( url, suppress=True, type="GET", popup=0, header=None ):
 
         printDebug("url = "+url)
         printDebug("header = "+str(httpHeader))
-        if g_usehttps == "true":
-        	print("Using HTTPS")
-        	server = server.split(':')[0]
-        	server += ":" + g_httpsport
-        	print("SERVER=" + str(server))
-        	conn = httplib.HTTPSConnection(server)#,timeout=5)
+        
+        versionCheck = checkServerVersion(_PARAM_SERVERVERSION)
+        if g_usehttps == "true" and versionCheck:
+		printDebug("Using HTTPS SECURE Connection serverVersion: "+str(_PARAM_SERVERVERSION))
+		server = server.split(':')[0]
+		server += ":" + g_httpsport
+		conn = httplib.HTTPSConnection(server)#,timeout=5)
+
+	elif g_usehttps == "true" and not versionCheck:
+		printDebug("WARNING: Use HTTPS is Enabled but server version: "+str(_PARAM_SERVERVERSION)+" does not support it!")
+		conn = httplib.HTTPConnection(server)#,timeout=5)
         else:
-        	print("Using HTTP")
+        	printDebug("Using HTTP NONE-SECURE Connection")
         	conn = httplib.HTTPConnection(server)#,timeout=5)
         	
         conn.request(type, urlPath, headers=httpHeader)
@@ -1087,8 +1093,18 @@ def addGUIItem( url, details, extraData, context=None, folder=True ):
         if (extraData.get('token',None) is None) and _PARAM_TOKEN:
             extraData['token']=_PARAM_TOKEN
 
+	if not extraData.get('parameters'):
+		extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
+	else:
+		paramitem = extraData.get('parameters')
+		if not paramitem.get('serverVersion'):
+			extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
+				
+	
+	
         aToken=getAuthDetails(extraData)
         qToken=getAuthDetails(extraData, prefix='?')
+        
 
         if extraData.get('mode',None) is None:
             mode="&mode=0"
@@ -1224,9 +1240,11 @@ def displaySections( filter=None, shared=False ):
                         'type'         : "Video" ,
                         'thumb'        : getFanart(section, section.get('address'), False) ,
                         'token'        : section.get('token',None) }
-
+	    
+	    extraData['parameters']={'serverVersion' : section.get('serverVersion','Unknown') }
+	    
             #Determine what we are going to do process after a link is selected by the user, based on the content we find
-
+	
             path=section['path']
 
             if section.get('type') == 'show':
@@ -1551,7 +1569,7 @@ def TVShows( url, tree=None ):
                    'token'             : _PARAM_TOKEN ,
                    'key'               : show.get('key','') ,
                    'ratingKey'         : str(show.get('ratingKey',0)) }
-
+                   
         #banner art
         if show.get('banner',None) is not None:
             extraData['banner']='http://'+server+show.get('banner')
@@ -2083,22 +2101,16 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
         start = xbmcplugin.setResolvedUrl(pluginhandle, True, item)
 
 
-    #Get the server IP from the server URL (IP + Port)
-    serverIP = server.split(':')[0]
-    
-    #Call discoverAllServers in order to get the "Server Version" from server xml
-    for serverData in discoverAllServers().values():
-	if serverData['server'] == serverIP:
-		#split server version string up as it contains a '-' and cannot use this with > operator
-		serverVersion = serverData['version'].split('-')[0]
     
     serverMultiUser = False
-    if serverVersion >= "0.9.8.0":
-    	serverMultiUser = True
     
-    if serverMultiUser:
-    	#Sets new Timeline API state before playing (nice to have)
-    	getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+    versionCheck = checkServerVersion(_PARAM_SERVERVERSION)
+    if versionCheck:
+	serverMultiUser = True
+	#Sets new Timeline API state to buffering before playing (nice to have)
+	getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+    else:
+    	printDebug("Server version is either Unknown or not supported! Unable to use Timeline API")
     
     #Set a loop to wait for positive confirmation of playback
     count = 0
@@ -2265,7 +2277,7 @@ def monitorPlayback( id, server, servermultiuser):
 	    	getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
 	
 	if player.XBMC_PLAYERSTATE == "playing" :
-	    if servermultiuser == True:
+	    if servermultiuser:
 	        printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
 	    	getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
 	    	#No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
@@ -2273,7 +2285,7 @@ def monitorPlayback( id, server, servermultiuser):
 	    #Legacy PMS Server server support before MultiUser version v0.9.8.0  
 	    elif servermultiuser == False:
 	    	if currentTime < 30:
-	            printDebug("Less that 30 seconds, will not set resume")
+	            printDebug("Less than 30 seconds, will not set resume")
 		elif progress < 95:
 		    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
 		    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
@@ -2596,7 +2608,9 @@ def processDirectory( url, tree=None ):
         details={'title' : directory.get('title','Unknown').encode('utf-8') }
         extraData={'thumb'        : getThumb(directory, server) ,
                    'fanart_image' : getFanart(tree, server, False) }
-
+	
+	extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION }
+	
         if extraData['thumb'] == '':
             extraData['thumb']=extraData['fanart_image']
 
@@ -3096,6 +3110,7 @@ def movieTag(url, server, tree, movie, randomNumber):
                'ratingKey'    : str(movie.get('ratingKey',0)),
                'duration'     : duration,
                'resume'       : int (int(view_offset)/1000) }
+    
 
     #Determine what tupe of watched flag [overlay] to use
     if int(movie.get('viewCount',0)) > 0:
@@ -3370,7 +3385,30 @@ def getServerFromURL( url ):
         return url.split('/')[2]
     else:
         return url.split('/')[0]
-
+        
+def checkServerVersion( serverVersion ):
+    '''
+    Checks the server version for new features functionality. Such as: TimelineAPI and HTTPS support.
+    @ input: The Reported Server Version Number
+    @ return: bool if check passed!
+    '''
+    PMS_SERVER_HTTPS_MINVERSION = "0.9.8.0"
+	
+    if not serverVersion == "Unknown":
+	try:
+		#split server version string up as it can contain a '-' and cannot use this with > operator
+		serverVersion = serverVersion.split('-')[0]
+	except:
+		serverVersion = serverVersion
+	
+	if serverVersion >= PMS_SERVER_HTTPS_MINVERSION:
+		return True
+	else:
+		return False
+    else:
+    	return False
+	
+        
 def getLinkURL( url, pathData, server ):
     '''
         Investigate the passed URL and determine what is required to
@@ -3866,6 +3904,8 @@ def shelf( server_list=None ):
     
         global _PARAM_TOKEN
         _PARAM_TOKEN = server_details.get('token','')
+        global _PARAM_SERVERVERSION
+        _PARAM_SERVERVERSION = server_details.get('serverVersion','')
         aToken=getAuthDetails({'token': _PARAM_TOKEN} )
         qToken=getAuthDetails({'token': _PARAM_TOKEN}, prefix='?')
         
@@ -4055,6 +4095,8 @@ def shelfChannel( server_list = None):
         
         global _PARAM_TOKEN
         _PARAM_TOKEN = server_details.get('token','')
+        global _PARAM_SERVERVERSION
+        _PARAM_SERVERVERSION = server_details.get('serverVersion','')
         aToken=getAuthDetails({'token': _PARAM_TOKEN} )
         qToken=getAuthDetails({'token': _PARAM_TOKEN}, prefix='?')
 
@@ -4173,7 +4215,9 @@ def displayServers( url ):
             extraData={'token' : mediaserver.get('token') }
         else:
             extraData={}
-
+	
+	extraData['parameters']={'serverVersion' : mediaserver.get('serverVersion','Unknown') }
+	
         if type == "video":
             extraData['mode']=_MODE_PLEXPLUGINS
             s_url='http://%s:%s/video' % ( mediaserver.get('server',''), mediaserver.get('port') )
@@ -4457,6 +4501,7 @@ param_transcodeOverride=int(params.get('transcode',0))
 param_identifier=params.get('identifier',None)
 param_indirect=params.get('indirect',None)
 _PARAM_TOKEN=params.get('X-Plex-Token',None)
+_PARAM_SERVERVERSION=params.get('serverVersion',None)
 force=params.get('force')
 
 #Populate Skin variables
@@ -4547,6 +4592,7 @@ else:
         print "PleXBMC -> Name: "+str(param_name)
         print "PleXBMC -> identifier: " + str(param_identifier)
         print "PleXBMC -> token: " + str(_PARAM_TOKEN)
+        print "PleXBMC -> ServerVersion: " + str(_PARAM_SERVERVERSION)
 
     #Run a function based on the mode variable that was passed in the URL
     if ( mode == None ) or ( param_url == None ) or ( len(param_url)<1 ):
