@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <strings>
     <string id="30000">Primary Server Address</string>
 	<string id="30001">Stream from PMS</string>
@@ -7,6 +7,8 @@
 	<string id="30004">Automatic Discovery?</string>
 	<string id="30005">PMS Username: </string>
 	<string id="30006">PMS Password: </string>
+	<string id="30094">Use HTTPS: </string>
+	<string id="30095">HTTPS Port: </string>
     <string id="30007">Always transcode? </string>
     <string id="30008">Transcode format </string>
     <string id="30011">Auto</string>

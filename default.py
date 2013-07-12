@@ -216,6 +216,8 @@ g_channelview = __settings__.getSetting('channelview')
 g_flatten = __settings__.getSetting('flatten')
 printDebug("PleXBMC -> Flatten is: "+ g_flatten, False)
 g_forcedvd = __settings__.getSetting('forcedvd')
+g_usehttps = __settings__.getSetting('usehttps')
+g_httpsport = __settings__.getSetting('httpsport')
 
 if g_debug == "true":
     print "PleXBMC -> Settings streaming: " + g_stream
@@ -825,7 +827,7 @@ def getNewMyPlexToken( suppress=True , title="Error" ):
 
     return token
 
-def getURL( url, suppress=True, type="GET", popup=0 ):
+def getURL( url, suppress=True, type="GET", popup=0, header=None ):
     printDebug("== ENTER: getURL ==", False)
     try:
         if url[0:4] == "http":
@@ -837,13 +839,25 @@ def getURL( url, suppress=True, type="GET", popup=0 ):
 
         server=url.split('/')[serversplit]
         urlPath="/"+"/".join(url.split('/')[urlsplit:])
-
-        authHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
+	
+	if not header == None:
+		httpHeader=header
+	else:
+		httpHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
 
         printDebug("url = "+url)
-        printDebug("header = "+str(authHeader))
-        conn = httplib.HTTPConnection(server)#,timeout=5)
-        conn.request(type, urlPath, headers=authHeader)
+        printDebug("header = "+str(httpHeader))
+        if g_usehttps == "true":
+        	print("Using HTTPS")
+        	server = server.split(':')[0]
+        	server += ":" + g_httpsport
+        	print("SERVER=" + str(server))
+        	conn = httplib.HTTPSConnection(server)#,timeout=5)
+        else:
+        	print("Using HTTP")
+        	conn = httplib.HTTPConnection(server)#,timeout=5)
+        	
+        conn.request(type, urlPath, headers=httpHeader)
         data = conn.getresponse()
         
         if int(data.status) == 200:
@@ -954,39 +968,14 @@ def getTimelineURL(server, container, id, state, time=0, duration=0):
 	                    'X-Plex-Client-Identifier': g_sessionID,
 	                    'X-Plex-Device-Name': XBMC_SYSTEMNAME}
 
+	getURL("http://" + server + urlPath, suppress=True, header=getHeader)
+	
 
-        printDebug("header = "+str(getHeader))
-        conn = httplib.HTTPConnection(server)#,timeout=5)
-        conn.request("GET", urlPath, headers=getHeader)
-        data = conn.getresponse()
+    except:
+    	return False
         
-        if int(data.status) == 200:
-            link=data.read()
-            try: conn.close()
-            except: pass
-            return link
-
-        
-                    
-        else:
-            link=data.read()
-            try: conn.close()
-            except: pass
-            return link
-            
-    except socket.gaierror :
-        error = "Unable to locate host [%s]\nCheck host name is correct" % server
-        print "PleXBMC %s" % error
-        
-        
-    except socket.error, msg :
-        error="Server[%s] is offline, or not responding\nReason: %s" % (server, str(msg))
-        print "PleXBMC -> %s" % error
-        
-    try: conn.close()
-    except: pass
     
-    return False
+    return True
 
 def mediaType( partData, server, dvdplayback=False ):
     printDebug("== ENTER: mediaType ==", False)
