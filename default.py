@@ -26,6 +26,7 @@
 '''
 
 import urllib
+from urlparse import urlparse, urlunparse, parse_qs
 import re
 import xbmcplugin
 import xbmcgui
@@ -82,8 +83,7 @@ class MyPlayer(xbmc.Player) :
             self.XBMC_PLAYERSTATE="stopped"
             
             
-	
-	
+
 player=MyPlayer()
 
 print "===== PLEXBMC START ====="
@@ -840,28 +840,45 @@ def getURL( url, suppress=True, type="GET", popup=0, header=None ):
 
         server=url.split('/')[serversplit]
         urlPath="/"+"/".join(url.split('/')[urlsplit:])
-	
-	if not header == None:
-		httpHeader=header
-	else:
-		httpHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
+
+        #User urlparse to remove the "X-Plex-Token" query string param (increased security by not using security tokens in the url)
+        u = urlparse(urlPath)
+        query = parse_qs(u.query)
+        query.pop('X-Plex-Token',None)
+        u = u._replace(query=urllib.urlencode(query,True))
+        urlPath = urlunparse(u)
+        
+        
+        if not header == None and 'X-Plex-Token' not in header.keys() :
+            httpHeader=header
+            if not _PARAM_TOKEN is None:
+                httpHeader['X-Plex-Token'] = _PARAM_TOKEN
+            else:
+                httpHeader['X-Plex-Token'] = getAuthTokenFromURL(url)
+        else:
+            if not _PARAM_TOKEN is None:
+                httpHeader=getAuthDetails({'token':_PARAM_TOKEN}, False)
+            else:
+                token = getAuthTokenFromURL(url)
+                httpHeader=getAuthDetails({'token':token}, False)
 
         printDebug("url = "+url)
         printDebug("header = "+str(httpHeader))
-        
         versionCheck = checkServerVersion(_PARAM_SERVERVERSION)
-        if g_usehttps == "true" and versionCheck:
-		printDebug("Using HTTPS SECURE Connection serverVersion: "+str(_PARAM_SERVERVERSION))
-		server = server.split(':')[0]
-		server += ":" + g_httpsport
-		conn = httplib.HTTPSConnection(server)#,timeout=5)
 
-	elif g_usehttps == "true" and not versionCheck:
-		printDebug("WARNING: Use HTTPS is Enabled but server version: "+str(_PARAM_SERVERVERSION)+" does not support it!")
-		conn = httplib.HTTPConnection(server)#,timeout=5)
+        if g_usehttps == "true" and versionCheck:
+            printDebug("Using HTTPS SECURE Connection serverVersion: "+str(_PARAM_SERVERVERSION))
+            server = server.split(':')[0]
+            server += ":" + g_httpsport
+            conn = httplib.HTTPSConnection(server)#,timeout=5)
+
+        elif g_usehttps == "true" and not versionCheck:
+            printDebug("WARNING: Use HTTPS is Enabled but server version: "+str(_PARAM_SERVERVERSION)+" does not support it!")
+            conn = httplib.HTTPConnection(server)#,timeout=5)
+
         else:
-        	printDebug("Using HTTP NONE-SECURE Connection")
-        	conn = httplib.HTTPConnection(server)#,timeout=5)
+        	    printDebug("Using HTTP NONE-SECURE Connection")
+        	    conn = httplib.HTTPConnection(server)#,timeout=5)
         	
         conn.request(type, urlPath, headers=httpHeader)
         data = conn.getresponse()
@@ -953,15 +970,15 @@ def getTimelineURL(server, container, id, state, time=0, duration=0):
         elif state == "stopped":
         	urlPath += "&state=stopped&time=" + str(time) + "&duration=" + str(duration)
         elif state == "paused":
-		urlPath += "&state=paused&time=" + str(time) + "&duration=" + str(duration)
-	else:
-		printDebug("No valid state supplied for getTimelineURL. State: " + str(state))
-		return
-	
-	urlPath += getAuthDetails({'token':_PARAM_TOKEN})
-	
-	global g_sessionID
-	if g_sessionID is None:
+            urlPath += "&state=paused&time=" + str(time) + "&duration=" + str(duration)
+        else:
+            printDebug("No valid state supplied for getTimelineURL. State: " + str(state))
+            return
+        
+        urlPath += getAuthDetails({'token':_PARAM_TOKEN})
+
+        global g_sessionID
+        if g_sessionID is None:
         	import uuid
         	g_sessionID=str(uuid.uuid4())
         
@@ -974,12 +991,12 @@ def getTimelineURL(server, container, id, state, time=0, duration=0):
 	                    'X-Plex-Client-Identifier': g_sessionID,
 	                    'X-Plex-Device-Name': XBMC_SYSTEMNAME}
 
-	getURL("http://" + server + urlPath, suppress=True, header=getHeader)
-	
+        getURL("http://" + server + urlPath, suppress=True, header=getHeader)
+
 
     except:
     	return False
-        
+
     
     return True
 
@@ -1093,15 +1110,15 @@ def addGUIItem( url, details, extraData, context=None, folder=True ):
         if (extraData.get('token',None) is None) and _PARAM_TOKEN:
             extraData['token']=_PARAM_TOKEN
 
-	if not extraData.get('parameters'):
-		extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
-	else:
-		paramitem = extraData.get('parameters')
-		if not paramitem.get('serverVersion'):
-			extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
-				
-	
-	
+        if not extraData.get('parameters'):
+            extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
+        else:
+            paramitem = extraData.get('parameters')
+            if not paramitem.get('serverVersion'):
+                extraData['parameters']={'serverVersion' : str(_PARAM_SERVERVERSION) }
+
+
+
         aToken=getAuthDetails(extraData)
         qToken=getAuthDetails(extraData, prefix='?')
         
@@ -1212,8 +1229,9 @@ def addGUIItem( url, details, extraData, context=None, folder=True ):
                 plugin_url="XBMC.PlayMedia("+ playTranscode + ")"
                 context.insert(0,('Play Transcoded', plugin_url , ))
                 printDebug("Setting transcode options to [%s]" % plugin_url)
-
+                
             liz.addContextMenuItems( context, g_contextReplace )
+            
 
         return xbmcplugin.addDirectoryItem(handle=pluginhandle,url=u,listitem=liz,isFolder=folder)
 
@@ -1240,11 +1258,11 @@ def displaySections( filter=None, shared=False ):
                         'type'         : "Video" ,
                         'thumb'        : getFanart(section, section.get('address'), False) ,
                         'token'        : section.get('token',None) }
-	    
-	    extraData['parameters']={'serverVersion' : section.get('serverVersion','Unknown') }
-	    
+
+            extraData['parameters']={'serverVersion' : section.get('serverVersion','Unknown') }
+
             #Determine what we are going to do process after a link is selected by the user, based on the content we find
-	
+
             path=section['path']
 
             if section.get('type') == 'show':
@@ -1484,23 +1502,29 @@ def buildContextMenu( url, itemData ):
     refreshURL=url.replace("/all", "/refresh")
     plugin_url="XBMC.RunScript("+g_loc+"/default.py, "
     ID=itemData.get('ratingKey','0')
+    u = ""
+    aToken=getAuthDetails(itemData)
+
+    if itemData.get('parameters'):
+        for argument, value in itemData.get('parameters').items():
+            u="%s&%s=%s" % ( u, argument, urllib.quote(value) )
 
     #Initiate Library refresh
-    libraryRefresh = plugin_url+"update, " + refreshURL.split('?')[0]+getAuthDetails(itemData,prefix="?") + ")"
+    libraryRefresh = plugin_url+"update, " + refreshURL.split('?')[0]+u+aToken + ")"
     context.append(('Rescan library section', libraryRefresh , ))
 
     #Mark media unwatched
-    unwatchURL="http://"+server+"/:/unscrobble?key="+ID+"&identifier=com.plexapp.plugins.library"+getAuthDetails(itemData)
+    unwatchURL="http://"+server+"/:/unscrobble?key="+ID+"&identifier=com.plexapp.plugins.library"+u+aToken
     unwatched=plugin_url+"watch, " + unwatchURL + ")"
     context.append(('Mark as Unwatched', unwatched , ))
 
     #Mark media watched
-    watchURL="http://"+server+"/:/scrobble?key="+ID+"&identifier=com.plexapp.plugins.library"+getAuthDetails(itemData)
+    watchURL="http://"+server+"/:/scrobble?key="+ID+"&identifier=com.plexapp.plugins.library"+u+aToken
     watched=plugin_url+"watch, " + watchURL + ")"
     context.append(('Mark as Watched', watched , ))
 
     #Delete media from Library
-    deleteURL="http://"+server+"/library/metadata/"+ID+getAuthDetails(itemData,prefix="?")
+    deleteURL="http://"+server+"/library/metadata/"+ID+"?identifier=com.plexapp.plugins.library"+u+aToken
     removed=plugin_url+"delete, " + deleteURL + ")"
     context.append(('Delete media', removed , ))
 
@@ -1513,12 +1537,12 @@ def buildContextMenu( url, itemData ):
     context.append(('Reload Section', listingRefresh , ))
 
     #alter audio
-    alterAudioURL="http://"+server+"/library/metadata/"+ID+getAuthDetails(itemData,prefix="?")
+    alterAudioURL="http://"+server+"/library/metadata/"+ID+"?identifier=com.plexapp.plugins.library"+u+aToken
     alterAudio=plugin_url+"audio, " + alterAudioURL + ")"
     context.append(('Select Audio', alterAudio , ))
 
     #alter subs
-    alterSubsURL="http://"+server+"/library/metadata/"+ID+getAuthDetails(itemData,prefix="?")
+    alterSubsURL="http://"+server+"/library/metadata/"+ID+"?identifier=com.plexapp.plugins.library"+u+aToken
     alterSubs=plugin_url+"subs, " + alterSubsURL + ")"
     context.append(('Select Subtitle', alterSubs , ))
 
@@ -1570,6 +1594,9 @@ def TVShows( url, tree=None ):
                    'key'               : show.get('key','') ,
                    'ratingKey'         : str(show.get('ratingKey',0)) }
                    
+        extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION}
+        extraData['token']=_PARAM_TOKEN
+
         #banner art
         if show.get('banner',None) is not None:
             extraData['banner']='http://'+server+show.get('banner')
@@ -1658,6 +1685,9 @@ def TVSeasons( url ):
                    'key'               : season.get('key','') ,
                    'ratingKey'         : str(season.get('ratingKey',0)) ,
                    'mode'              : _MODE_TVEPISODES }
+
+        extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION}
+        extraData['token']=_PARAM_TOKEN
 
         if banner:
             extraData['banner']="http://"+server+banner
@@ -1765,6 +1795,9 @@ def TVEpisodes( url, tree=None ):
                    'ratingKey'    : str(episode.get('ratingKey',0)),
                    'duration'     : duration,
                    'resume'       : int(int(view_offset)/1000) }
+
+        extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION}
+        extraData['token']=_PARAM_TOKEN
 
         if extraData['fanart_image'] == "" and g_skipimages == "false":
             extraData['fanart_image']=sectionart
@@ -2106,9 +2139,9 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
     
     versionCheck = checkServerVersion(_PARAM_SERVERVERSION)
     if versionCheck:
-	serverMultiUser = True
-	#Sets new Timeline API state to buffering before playing (nice to have)
-	getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+        serverMultiUser = True
+        #Sets new Timeline API state to buffering before playing (nice to have)
+        getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
     else:
     	printDebug("Server version is either Unknown or not supported! Unable to use Timeline API")
     
@@ -2274,28 +2307,28 @@ def monitorPlayback( id, server, servermultiuser):
         if player.XBMC_PLAYERSTATE == "paused":
             if servermultiuser:
                 printDebug( "Movies PAUSED time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-	    	getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
-	
-	if player.XBMC_PLAYERSTATE == "playing" :
-	    if servermultiuser:
-	        printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-	    	getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
-	    	#No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
-	    
-	    #Legacy PMS Server server support before MultiUser version v0.9.8.0  
-	    elif servermultiuser == False:
-	    	if currentTime < 30:
-	            printDebug("Less than 30 seconds, will not set resume")
-		elif progress < 95:
-		    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-		    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
-	            complete=0
-		#Otherwise, mark as watched
-		else:
-		    if complete == 0:
-			printDebug( "Movie marked as watched. Over 95% complete")
-			getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
-			complete=1
+                getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
+
+        if player.XBMC_PLAYERSTATE == "playing" :
+            if servermultiuser:
+                printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+                getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
+                #No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
+
+        #Legacy PMS Server server support before MultiUser version v0.9.8.0  
+        elif servermultiuser == False:
+            if currentTime < 30:
+                printDebug("Less than 30 seconds, will not set resume")
+        elif progress < 95:
+            printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+            getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
+            complete=0
+        #Otherwise, mark as watched
+        else:
+            if complete == 0:
+                printDebug( "Movie marked as watched. Over 95% complete")
+                getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
+                complete=1
 
         xbmc.sleep(5000)
 
@@ -2608,9 +2641,9 @@ def processDirectory( url, tree=None ):
         details={'title' : directory.get('title','Unknown').encode('utf-8') }
         extraData={'thumb'        : getThumb(directory, server) ,
                    'fanart_image' : getFanart(tree, server, False) }
-	
-	extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION }
-	
+
+        extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION }
+
         if extraData['thumb'] == '':
             extraData['thumb']=extraData['fanart_image']
 
@@ -3111,6 +3144,8 @@ def movieTag(url, server, tree, movie, randomNumber):
                'duration'     : duration,
                'resume'       : int (int(view_offset)/1000) }
     
+    extraData['parameters']={'serverVersion' : _PARAM_SERVERVERSION}
+    extraData['token']=_PARAM_TOKEN
 
     #Determine what tupe of watched flag [overlay] to use
     if int(movie.get('viewCount',0)) > 0:
@@ -3393,21 +3428,21 @@ def checkServerVersion( serverVersion ):
     @ return: bool if check passed!
     '''
     PMS_SERVER_HTTPS_MINVERSION = "0.9.8.0"
-	
+
     if not serverVersion == "Unknown":
-	try:
-		#split server version string up as it can contain a '-' and cannot use this with > operator
-		serverVersion = serverVersion.split('-')[0]
-	except:
-		serverVersion = serverVersion
-	
-	if serverVersion >= PMS_SERVER_HTTPS_MINVERSION:
-		return True
-	else:
-		return False
+        try:
+            #split server version string up as it can contain a '-' and cannot use this with > operator
+            serverVersion = serverVersion.split('-')[0]
+        except:
+            serverVersion = serverVersion
+
+        if serverVersion >= PMS_SERVER_HTTPS_MINVERSION:
+            return True
+        else:
+            return False
     else:
-    	return False
-	
+            return False
+
         
 def getLinkURL( url, pathData, server ):
     '''
@@ -4215,9 +4250,9 @@ def displayServers( url ):
             extraData={'token' : mediaserver.get('token') }
         else:
             extraData={}
-	
-	extraData['parameters']={'serverVersion' : mediaserver.get('serverVersion','Unknown') }
-	
+
+        extraData['parameters']={'serverVersion' : mediaserver.get('serverVersion','Unknown') }
+
         if type == "video":
             extraData['mode']=_MODE_PLEXPLUGINS
             s_url='http://%s:%s/video' % ( mediaserver.get('server',''), mediaserver.get('port') )
