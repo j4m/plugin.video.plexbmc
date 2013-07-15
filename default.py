@@ -4657,7 +4657,7 @@ else:
         channelView(param_url)
 
     elif mode == _MODE_DISPLAYSERVERS:
-        displayServers(param_url)
+        displayServers(param_url) 
 
     elif mode == _MODE_PLAYLIBRARY_TRANSCODE:
         playLibraryMedia(param_url,override=True)
