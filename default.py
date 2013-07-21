@@ -267,7 +267,10 @@ g_txheaders = {
 #Set up holding variable for session ID
 global g_sessionID
 g_sessionID=None
-        
+
+global g_selectedSubID
+
+
 def discoverAllServers( ):
     '''
         Take the users settings and add the required master servers
@@ -939,6 +942,25 @@ def getURL( url, suppress=True, type="GET", popup=0, header=None ):
     
     return False
 
+
+def pingTranscoder(server):
+    printDebug("== ENTER: pingTranscoder ==", False)
+    try:
+        global g_sessionID
+        if g_sessionID is None:
+            import uuid
+            g_sessionID=str(uuid.uuid4())
+    
+        urlPath="/video/:/transcode/universal/ping?session=" + g_sessionID
+        urlPath += getAuthDetails({'token':_PARAM_TOKEN})
+
+        getURL("http://" + server + urlPath, suppress=True)
+
+    except:
+    	return False
+    
+    return True
+
 def getTimelineURL(server, container, id, state, time=0, duration=0):
 
     printDebug("== ENTER: getTimelineURL ==", False)
@@ -953,33 +975,31 @@ def getTimelineURL(server, container, id, state, time=0, duration=0):
         elif state == "stopped":
         	urlPath += "&state=stopped&time=" + str(time) + "&duration=" + str(duration)
         elif state == "paused":
-		urlPath += "&state=paused&time=" + str(time) + "&duration=" + str(duration)
-	else:
-		printDebug("No valid state supplied for getTimelineURL. State: " + str(state))
-		return
-	
-	urlPath += getAuthDetails({'token':_PARAM_TOKEN})
-	
-	global g_sessionID
-	if g_sessionID is None:
-        	import uuid
-        	g_sessionID=str(uuid.uuid4())
-        
-        getHeader={'X-Plex-Platform': PLEXBMC_PLATFORM + "-XBMC",
-	                    'X-Plex-Platform-Version': XBMC_BUILDVERSION,
-	                    'X-Plex-Provides': "player",
-	                    'X-Plex-Product': "PleXBMC",
-	                    'X-Plex-Version': PLEXBMC_VERSION,
-	                    'X-Plex-Device': PLEXBMC_PLATFORM,
-	                    'X-Plex-Client-Identifier': g_sessionID,
-	                    'X-Plex-Device-Name': XBMC_SYSTEMNAME}
+            urlPath += "&state=paused&time=" + str(time) + "&duration=" + str(duration)
+        else:
+            printDebug("No valid state supplied for getTimelineURL. State: " + str(state))
+            return
 
-	getURL("http://" + server + urlPath, suppress=True, header=getHeader)
-	
+        urlPath += getAuthDetails({'token':_PARAM_TOKEN})
+
+        global g_sessionID
+        if g_sessionID is None:
+            import uuid
+            g_sessionID=str(uuid.uuid4())
+                
+        getHeader={'X-Plex-Platform': PLEXBMC_PLATFORM + "-XBMC",
+	                        'X-Plex-Platform-Version': XBMC_BUILDVERSION,
+	                        'X-Plex-Provides': "player",
+	                        'X-Plex-Product': "PleXBMC",
+	                        'X-Plex-Version': PLEXBMC_VERSION,
+	                        'X-Plex-Device': PLEXBMC_PLATFORM,
+	                        'X-Plex-Client-Identifier': g_sessionID,
+	                        'X-Plex-Device-Name': XBMC_SYSTEMNAME}
+            
+        getURL("http://" + server + urlPath, suppress=True, header=getHeader)
 
     except:
     	return False
-        
     
     return True
 
@@ -1937,20 +1957,32 @@ def getAudioSubtitlesMedia( server, tree, full=False ):
             
             #Subtitle Streams
             elif stream['streamType'] == '3':
-            
+                printDebug( "Found subtitles id : " + str(stream['id']))
+                subOffset += 1
                 if subOffset == -1:
+                    printDebug( "Found no subtitles id : " + str(stream['id']))
                     subOffset = int(stream.get('index',-1))
                 elif stream.get('index',-1) > 0 and stream.get('index',-1) < subOffset:
+                    printDebug( "Found non-selected subtitles id : " + str(stream['id']))
                     subOffset = int(stream.get('index',-1))
                     
                 if stream.get('selected') == "1":
-                    printDebug( "Found preferred subtitles id : " + str(stream['id']))
+                    printDebug( "Found selected subtitles id : " + str(stream['id']))
                     subCount += 1
                     subtitle=stream
                     if stream.get('key'):
+                        printDebug( "Setting external sub url to: " + 'http://'+server+stream['key'])
                         subtitle['key'] = 'http://'+server+stream['key']
+                        selectedSubOffset=int( stream.get('id') )
+                        
+                        sub_select_URL="http://%s/library/parts/%s?subtitleStreamID=%s" % ( server, stuff.get('id'), "-1") +getAuthDetails({'token':_PARAM_TOKEN})
+                        outcome=getURL(sub_select_URL, type="PUT")
+
+                        g_selectedSubID = { 'subid' : selectedSubOffset,
+                                            'partid' : stuff.get('id') }
                     else:
-                        selectedSubOffset=int( stream.get('index') ) - subOffset
+                        selectedSubOffset=int( stream.get('id') )
+                        g_selectedSubID = None
                     
     else:
             printDebug( "Stream selection is set OFF")
@@ -2106,9 +2138,9 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
     
     versionCheck = checkServerVersion(_PARAM_SERVERVERSION)
     if versionCheck:
-	serverMultiUser = True
-	#Sets new Timeline API state to buffering before playing (nice to have)
-	getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
+        serverMultiUser = True
+        #Sets new Timeline API state to buffering before playing (nice to have)
+        getTimelineURL(server, "/library/sections/onDeck", id, "buffering")
     else:
     	printDebug("Server version is either Unknown or not supported! Unable to use Timeline API")
     
@@ -2122,11 +2154,20 @@ def playLibraryMedia( vids, override=0, force=None, full_data=False, shelf=False
         else:
             time.sleep(2)
 
-    if not (g_transcode == "true" ):
-        setAudioSubtitles(streams)
-    
+#    if not (g_transcode == "true" ):
+    setAudioSubtitles(streams)
+    try:
+        if g_selectedSubID is not None:
+            if g_selectedSubID.get('subid') > 0 and g_selectedSubID.get('partid') > 0:
+                sub_select_URL="http://%s/library/parts/%s?subtitleStreamID=%s" % ( server, g_selectedSubID.get('partid') , g_selectedSubID.get('subid')) +getAuthDetails({'token':_PARAM_TOKEN})
+                outcome=getURL(sub_select_URL, type="PUT")
+    except:
+        pass
+            
     if streams['type'] == "video":
         monitorPlayback(id,server,serverMultiUser)
+
+
 
     return
 
@@ -2176,6 +2217,7 @@ def setAudioSubtitles( stream ):
             try:
                 xbmc.Player().showSubtitles(False)
                 if subtitle.get('key'):
+                    printDebug ("Enabling external subtitles for url : " + subtitle['key']+getAuthDetails({'token':_PARAM_TOKEN},prefix="?"))
                     xbmc.Player().setSubtitles(subtitle['key']+getAuthDetails({'token':_PARAM_TOKEN},prefix="?"))                
                 else:
                     printDebug ("Enabling embedded subtitles at index %s" % stream['subOffset'])
@@ -2260,6 +2302,7 @@ def monitorPlayback( id, server, servermultiuser):
     monitorCount=0
     progress = 0
     complete = 0
+
     #Whilst the file is playing back
     while xbmc.Player().isPlaying():
         #Get the current playback time
@@ -2274,29 +2317,30 @@ def monitorPlayback( id, server, servermultiuser):
         if player.XBMC_PLAYERSTATE == "paused":
             if servermultiuser:
                 printDebug( "Movies PAUSED time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-	    	getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
-	
-	if player.XBMC_PLAYERSTATE == "playing" :
-	    if servermultiuser:
-	        printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-	    	getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
-	    	#No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
-	    
-	    #Legacy PMS Server server support before MultiUser version v0.9.8.0  
-	    elif servermultiuser == False:
-	    	if currentTime < 30:
-	            printDebug("Less than 30 seconds, will not set resume")
-		elif progress < 95:
-		    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
-		    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
-	            complete=0
-		#Otherwise, mark as watched
-		else:
-		    if complete == 0:
-			printDebug( "Movie marked as watched. Over 95% complete")
-			getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
-			complete=1
+                getTimelineURL(server, "/library/sections/onDeck", id, "paused", str(currentTime*1000), str(totalTime*1000))
 
+        if player.XBMC_PLAYERSTATE == "playing" :
+            if servermultiuser:
+                printDebug( "Movies PLAYING time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+                getTimelineURL(server, "/library/sections/onDeck", id, "playing", str(currentTime*1000), str(totalTime*1000))
+                #No need to use scrobble/watched status as new PMS Timeline API works this out for you based on reported client progress (95%+)
+
+            #Legacy PMS Server server support before MultiUser version v0.9.8.0  
+            elif servermultiuser == False:
+                if currentTime < 30:
+                    printDebug("Less than 30 seconds, will not set resume")
+                elif progress < 95:
+                    printDebug( "Movies played time: %s secs of %s @ %s%%" % ( currentTime, totalTime, progress) )
+                    getURL("http://"+server+"/:/progress?key="+id+"&identifier=com.plexapp.plugins.library&time="+str(currentTime*1000),suppress=True)
+                    complete=0
+                    #Otherwise, mark as watched
+            else:
+                if complete == 0:
+                    printDebug( "Movie marked as watched. Over 95% complete")
+                    getURL("http://"+server+"/:/scrobble?key="+id+"&identifier=com.plexapp.plugins.library",suppress=True)
+                    complete=1
+
+        pingTranscoder(server)
         xbmc.sleep(5000)
 
     #If we get this far, playback has stopped
@@ -2304,12 +2348,12 @@ def monitorPlayback( id, server, servermultiuser):
 
     if g_sessionID is not None:
         printDebug("Stopping PMS transcode job with session " + g_sessionID)
-        stopURL='http://'+server+'/video/:/transcode/segmented/stop?session='+g_sessionID
+        stopURL='http://'+server+'/video/:/transcode/universal/stop?session='+g_sessionID
         html=getURL(stopURL)
     
     if servermultiuser:
     	getTimelineURL(server, "/library/sections/onDeck", id, "stopped", str(currentTime*1000), str(totalTime*1000))
-    	
+    
     return
 
 def PLAY( url ):
@@ -2470,10 +2514,14 @@ def pluginTranscodeMonitor( sessionID, server ):
     printDebug("Playback Stopped")
     printDebug("Stopping PMS transcode job with session: " + sessionID)
     
-    stopURL='http://'+server+'/video/:/transcode/segmented/stop?session='+sessionID
+    stopURL='http://'+server+'/video/:/transcode/universal/stop?session='+sessionID
 
     html=getURL(stopURL)
-
+    #global g_selectedSubID
+    #if g_selectedSubID:
+    #    if g_selectedSubID.get('subid') > 0 and g_selectedSubID.get('partid') > 0:
+    #        sub_select_URL="http://%s/library/parts/%s?subtitleStreamID=%s" % ( server, g_selectedSubID.get('partid') , g_selectedSubID.get('subid')) +getAuthDetails({'token':_PARAM_TOKEN})
+    #        outcome=getURL(sub_select_URL, type="PUT")
     
     return
 
@@ -2668,55 +2716,39 @@ def transcode( id, url, identifier=None ):
     printDebug("Using preferred transcoding server: " + server)
     printDebug ("incoming URL is: %s" % url)
 
-    transcode_request="/video/:/transcode/segmented/start.m3u8"
-    transcode_settings={ '3g' : 0 ,
+    transcode_request="/video/:/transcode/universal/start.m3u8"
+    transcode_settings={ 
+                         'mediaIndex' : 0 ,
+                         'partIndex' : 0 ,
                          'offset' : 0 ,
-                         'quality' : g_quality ,
+                         #'fastSeek' : 1 ,
+                         'protocol' : "hls" ,
+                         'directPlay' : 0 ,
+                         'directStream' : 1,
+                         'waitForSegments' : 1,
+                         'videoQuality' : g_quality ,
+                         'videoResolution' : "1280x720" ,
+                         'maxVideoBitrate' : g_maxbitrate ,
                          'session' : g_sessionID ,
-                         'identifier' : identifier ,
-                         'httpCookie' : "" ,
-                         'userAgent' : "" ,
-                         'ratingKey' : id ,
                          'subtitleSize' : __settings__.getSetting('subSize').split('.')[0] ,
-                         'audioBoost' : __settings__.getSetting('audioSize').split('.')[0] ,
-                         'key' : "" }
+                         'audioBoost' : __settings__.getSetting('audioSize').split('.')[0]
+                          }
 
     if identifier:
-        transcode_target=url.split('url=')[1]
-        transcode_settings['webkit']=1
+        pass
     else:
-        transcode_settings['identifier']="com.plexapp.plugins.library"
-        transcode_settings['key']=urllib.quote_plus("http://%s/library/metadata/%s" % (server, id))
-        transcode_target=urllib.quote_plus("http://127.0.0.1:32400"+"/"+"/".join(url.split('/')[3:]))
+        transcode_target=urllib.quote_plus("http://127.0.0.1:32400/library/metadata/%s" % (id))
         printDebug ("filestream URL is: %s" % transcode_target )
 
-    transcode_request="%s?url=%s" % (transcode_request, transcode_target)
+    transcode_request="%s?path=%s" % (transcode_request, transcode_target)
 
     for argument, value in transcode_settings.items():
                 transcode_request="%s&%s=%s" % ( transcode_request, argument, value )
 
     printDebug("new transcode request is: %s" % transcode_request )
 
-    now=str(int(round(time.time(),0)))
-
-    msg = transcode_request+"@"+now
-    printDebug("Message to hash is " + msg)
-
-    #These are the DEV API keys - may need to change them on release
-    publicKey="KQMIY6GATPC63AIMC4R2"
-    privateKey = base64.decodestring("k3U6GLkZOoNIoSgjDshPErvqMIFdE0xMTx8kgsrhnC0=")
-
-    import hmac
-    import hashlib
-    hash=hmac.new(privateKey,msg,digestmod=hashlib.sha256)
-
-    printDebug("HMAC after hash is " + hash.hexdigest())
-
-    #Encode the binary hash in base64 for transmission
-    token=base64.b64encode(hash.digest())
-
-    #Send as part of URL to avoid the case sensitive header issue.
-    fullURL="http://"+server+transcode_request+"&X-Plex-Access-Key="+publicKey+"&X-Plex-Access-Time="+str(now)+"&X-Plex-Access-Code="+urllib.quote_plus(token)+"&"+capability
+    
+    fullURL="http://"+server+transcode_request+capability
 
     printDebug("Transcoded media location URL " + fullURL)
 
@@ -4269,27 +4301,80 @@ def getTranscodeSettings( override=False ):
         g_transcodefmt="m3u8"
 
         global g_quality
-        g_quality = str(int(__settings__.getSetting('quality'))+3)
+        quality_setting = int(__settings__.getSetting('quality'))
+
+        quality_values = { 0 : 60,
+                                 1 : 65,
+                                 2 : 70,
+                                 3 : 75,
+                                 4 : 80,
+                                 5 : 85,
+                                 6 : 90,
+                                 7 : 95,
+                                 8 : 100,
+                                 }
+                                 
+
+        g_quality = quality_values[quality_setting]
+
+        global g_maxbitrate
+        maxbitrate_setting = int(__settings__.getSetting('vidbitrate'))
+
+        maxbitrate_values = { 0 : 512,
+                                 1 : 1024,
+                                 2 : 2048,
+                                 3 : 3072,
+                                 4 : 4096,
+                                 5 : 5120,
+                                 6 : 6144,
+                                 7 : 7168,
+                                 8 : 8192,
+                                 9 : 9216,
+                                 }
+
+        g_maxbitrate = maxbitrate_values[maxbitrate_setting]
+
         printDebug( "Transcode format is " + g_transcodefmt)
-        printDebug( "Transcode quality is " + g_quality)
+        printDebug( "Transcode quality is " + str(g_quality))
+        printDebug( "Transcode max bitrate is " + str(g_maxbitrate))
 
-        baseCapability="http-live-streaming,http-mp4-streaming,http-streaming-video,http-streaming-video-1080p,http-mp4-video,http-mp4-video-1080p;videoDecoders=h264{profile:high&resolution:1080&level:51};"
-
+        #baseCapability="http-live-streaming,http-mp4-streaming,http-streaming-video,http-streaming-video-1080p,http-mp4-video,http-mp4-video-1080p;videoDecoders=h264{profile:high&resolution:1080&level:51};"
+        
+        extras = "add-limitation(scope=videoCodec&scopeName=h264&isRequired=true)"
+        
         g_audioOutput=__settings__.getSetting("audiotype")
         if g_audioOutput == "0":
-            audio="mp3,aac{bitrate:160000}"
+            extras = extras + "+add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=hls&audioCodec=aac)"
         elif g_audioOutput == "1":
-            audio="ac3{channels:6}"
+            extras = extras + "+add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=hls&audioCodec=ac3)"
         elif g_audioOutput == "2":
-            audio="dts{channels:6}"
-
-        global capability
-        capability="X-Plex-Client-Capabilities="+urllib.quote_plus("protocols="+baseCapability+"audioDecoders="+audio)
-        printDebug("Plex Client Capability = " + capability)
-
+            extras = extras + "+add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=hls&audioCodec=dts)"
+        
         import uuid
         global g_sessionID
         g_sessionID=str(uuid.uuid4())
+
+
+        global capability
+        capability="&X-Plex-Version=1.2.5"
+
+        capability_request={'X-Plex-Client-Identifier' : g_sessionID ,
+                        'X-Plex-Platform': urllib.quote_plus(PLEXBMC_PLATFORM + "-XBMC"),
+	                    'X-Plex-Platform-Version': urllib.quote_plus(XBMC_BUILDVERSION),
+	                    'X-Plex-Product': "PleXBMC",
+	                    'X-Plex-Version': urllib.quote_plus(PLEXBMC_VERSION),
+	                    'X-Plex-Device': urllib.quote_plus("Plex Home Theater"),
+	                    'X-Plex-Device-Name': urllib.quote_plus(XBMC_SYSTEMNAME),
+                        'X-Plex-Client-Profile-Extra' : urllib.quote_plus(extras)
+                    }
+
+
+        for argument, value in capability_request.items():
+                capability="%s&%s=%s" % ( capability, argument, value )
+        
+        printDebug("Plex Client Capability = " + capability)
+
+        
 
 def deleteMedia( url ):
     printDebug("== ENTER: deleteMedia ==", False)

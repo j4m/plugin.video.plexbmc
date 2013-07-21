@@ -30,7 +30,8 @@
     </category>
 
     <category label="30018" > <!-- Transcoding -->
-        <setting id="quality" type="enum" label="30040" values="320kbps, 240p|720kbps, 320p|1.5Mbps, 480p|2Mbps, 720p|3Mbps, 720p|4Mbps, 720p|8Mbps, 1080p|10Mbps, 1080p|12Mbps, 1080p|20Mbps, 1080p" />
+        <setting id="quality" type="enum" label="30040" default="6" values="60%|65%|70%|75%|80%|85%|90%|95%|100%" />
+        <setting id="vidbitrate" type="enum" label="30096" default="3" values="512Kbps|1Mbps|2Mbps|3Mbps|4Mbps|5Mbps|6Mbps|7Mbps|8Mbps|9Mbps" />
         <setting id="audiotype" type="enum" label="30057" values="Stereo|AC3|DTS" default="0" />
         <setting id="transcode" type="bool" label="30007" default="false"/>
 		<setting id="subSize" label="30068" type="slider" option="int" range="0,300" default="100" />

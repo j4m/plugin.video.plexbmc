@@ -42,7 +42,8 @@
     <string id="30037">External</string>
     <string id="30038">Audio and subtitle selector</string>
     <string id="30039">Never show subtitles</string>
-    <string id="30040">Quality</string>
+    <string id="30040">Video Quality</string>
+    <string id="30096">Max Bitrate</string>
     <string id="30041">Proxy Port</string>
     <string id="30042">Plex Channel View</string>
     <string id="30043">Flatten TV Shows</string>
